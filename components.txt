@@ -1,0 +1,4 @@
+List of Components we will be using-
+
+Arduino UNO
+Servo Motor
