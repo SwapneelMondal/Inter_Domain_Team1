@@ -1,23 +1,26 @@
 import cv2
 import numpy as np
 
-# Tighter HSV ranges for dominant colors
+# HSV color ranges for red, yellow, and blue
 color_ranges = {
     "red": [
-        (np.array([0, 150, 150]), np.array([10, 255, 255])),   # lower red
-        (np.array([170, 150, 150]), np.array([180, 255, 255])) # upper red
+        (np.array([0, 150, 150]), np.array([10, 255, 255])),
+        (np.array([170, 150, 150]), np.array([180, 255, 255]))
     ],
     "yellow": [
-        (np.array([20, 150, 150]), np.array([30, 255, 255]))   # bright yellow
+        (np.array([20, 150, 150]), np.array([30, 255, 255]))
     ],
     "blue": [
-        (np.array([100, 150, 150]), np.array([130, 255, 255])) # deep blue
+        (np.array([100, 150, 150]), np.array([130, 255, 255]))
     ]
 }
 
 camera_index = 0
 cap = cv2.VideoCapture(camera_index)
 
+# Pixel area range corresponding to 3cm to 10cm (adjust after calibration)
+min_area = 60**2
+max_area = 200**2
 
 while True:
     ret, frame = cap.read()
@@ -28,26 +31,29 @@ while True:
 
     dominant_box = None
     dominant_color = None
-    max_area = 0
+    max_box_area = 0
 
     for color, ranges in color_ranges.items():
         mask = None
-
-        for i, (lower, upper) in enumerate(ranges):
+        for lower, upper in ranges:
             temp_mask = cv2.inRange(hsv, lower, upper)
             mask = temp_mask if mask is None else cv2.bitwise_or(mask, temp_mask)
 
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_DILATE, np.ones((5, 5), np.uint8))
+        # Noise removal
+        kernel = np.ones((5,5), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_DILATE, kernel)
 
+        # Find contours
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area > 1500 and area > max_area:  # Pick only the largest among all colors
-                max_area = area
+            if min_area <= area <= max_area and area > max_box_area:
+                max_box_area = area
                 dominant_box = cv2.boundingRect(cnt)
                 dominant_color = color
 
+    # Draw bounding box if a box is detected
     if dominant_box is not None:
         x, y, w, h = dominant_box
         cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
@@ -56,7 +62,7 @@ while True:
 
     cv2.imshow("Dominant Color Box Detection", frame)
 
-    if cv2.waitKey(1) & 0xFF == 27:
+    if cv2.waitKey(1) & 0xFF == 27:  # ESC key to exit
         break
 
 cap.release()
