@@ -5,7 +5,7 @@ import os
 # 1. Setup reference logos
 # -------------------------------
 logo_folder = "logos"
-logo_names = ["Amazon", "Blinkit", "Flipkart", "Myntra"]
+logo_names = ["Amazon", "Blinkit", "Flipkart", "Reddit"]
 
 # Load reference images
 ref_images = {}
