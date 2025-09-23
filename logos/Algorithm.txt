@@ -1,0 +1,3 @@
+Use Opencv to read and process footage taken from phone
+Use template(FLANN) matching to match data image and footage.
+Take a point just outside of detected image and check its color(color of box)
