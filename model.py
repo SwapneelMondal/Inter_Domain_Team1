@@ -110,8 +110,9 @@ color_ranges = {
         (np.array([20, 150, 150]), np.array([30, 255, 255]))
     ],
     "blue": [
-        (np.array([100, 150, 150]), np.array([130, 255, 255]))
-    ]
+    (np.array([90, 100, 50]), np.array([130, 255, 255]))
+]
+
 }
 
 min_area = 60**2
