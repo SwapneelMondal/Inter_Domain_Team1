@@ -6,7 +6,7 @@ import os
 # 1. Setup reference logos
 # -------------------------------
 logo_folder = "logos"
-logo_names = ["Amazon", "Flipkart", "jio", "Nike", "Test"]
+logo_names = ["Amazon", "Blinkit", "Flipkart", "jio", "Nike"]
 
 # Load reference images
 ref_images = {}
@@ -25,8 +25,8 @@ sift = cv2.SIFT_create()
 ref_descriptors = {}
 for name, img in ref_images.items():
     kp, des = sift.detectAndCompute(img, None)
-    if des is None or len(des) < 2:
-        print(f"[WARNING] Not enough descriptors for {name}")
+    if des is None:
+        print(f"[WARNING] No descriptors found for {name}")
         continue
     ref_descriptors[name] = (kp, des, img.shape[::-1])  # (keypoints, descriptors, (width, height))
 
@@ -41,7 +41,7 @@ flann = cv2.FlannBasedMatcher(index_params, search_params)
 # -------------------------------
 def detect_logo(frame_gray):
     kp_frame, des_frame = sift.detectAndCompute(frame_gray, None)
-    if des_frame is None or len(des_frame) < 2:
+    if des_frame is None:
         return None, None, 0
 
     best_match = None
@@ -49,13 +49,7 @@ def detect_logo(frame_gray):
     best_box = None
 
     for name, (kp_ref, des_ref, shape) in ref_descriptors.items():
-        if des_ref is None or len(des_ref) < 2:
-            continue
-
         matches = flann.knnMatch(des_ref, des_frame, k=2)
-        if len(matches) == 0:
-            continue
-
         good_matches = [m for m, n in matches if m.distance < 0.7 * n.distance]
 
         if len(good_matches) > 10:
@@ -64,7 +58,7 @@ def detect_logo(frame_gray):
 
             M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
             if M is not None:
-                w, h = shape
+                w, h = shape  # width, height
                 pts = np.float32([[0,0],[0,h-1],[w-1,h-1],[w-1,0]]).reshape(-1,1,2)
                 dst = cv2.perspectiveTransform(pts, M)
                 if len(good_matches) > best_good_matches:
@@ -90,52 +84,64 @@ while True:
     frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     prediction, box, score = detect_logo(frame_gray)
 
-    if prediction and box is not None and score > 20:
+    if prediction and box is not None and score > 20:  # lowered threshold
         # Draw bounding polygon
         cv2.polylines(frame, [box], True, (0,255,0), 3)
 
-        # Put label above the first corner
+        # Put label
         cv2.putText(frame, f"{prediction} ({score})", 
                     (box[0][0][0], box[0][0][1] - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2, cv2.LINE_AA)
 
-        # -----------------------------
-        # Small square diagonally outside the detected logo
-        # -----------------------------
-        offset = 30  # pixels away from logo
-        square_size = 5  # 5x5 region
-        # bottom-right corner of the detected polygon
-        x = box[2][0][0] + offset
-        y = box[2][0][1] + offset
+        # -------------------------------
+        # Ratio-based offset for color detection
+        # -------------------------------
+        w = int(np.linalg.norm(box[0][0] - box[1][0]))  # width of logo
+        h = int(np.linalg.norm(box[1][0] - box[2][0]))  # height of logo
 
-        # Ensure square is inside frame
-        if x + square_size < frame.shape[1] and y + square_size < frame.shape[0]:
-            square = frame[y:y+square_size, x:x+square_size]
-            avg_color = square.mean(axis=(0,1))  # BGR average
-            avg_color_int = tuple([int(c) for c in avg_color])
-            
-            # Compute average color in BGR
-            square = frame[y:y+square_size, x:x+square_size]
-            avg_color = square.mean(axis=(0,1))  # BGR average
-            avg_color_int = tuple([int(c) for c in avg_color])
+        offset_x = int(0.2 * w)  # 20% of logo width
+        offset_y = int(0.2 * h)  # 20% of logo height
 
-            # Convert BGR -> RGB
-            avg_color_rgb = (avg_color_int[2], avg_color_int[1], avg_color_int[0])
+        # Take bottom-right corner and move diagonally outward
+        sample_x = int(box[2][0][0] + offset_x)
+        sample_y = int(box[2][0][1] + offset_y)
 
-            # Draw small square and display color on frame (still blue rectangle)
-            cv2.rectangle(frame, (x, y), (x+square_size, y+square_size), (255,0,0), 2)
-            cv2.putText(frame, str(avg_color_rgb), (x, y-5),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 1)
+        if 0 <= sample_x < frame.shape[1] and 0 <= sample_y < frame.shape[0]:
+            color = frame[sample_y, sample_x].tolist()  # BGR
+            rgb_color = (color[2], color[1], color[0])  # Convert BGR → RGB
 
-            # Print RGB to console
-            print(f"Detected color (RGB): {avg_color_rgb}")
+            # Convert to HSV for filtering
+            hsv_color = cv2.cvtColor(np.uint8([[color]]), cv2.COLOR_BGR2HSV)[0][0]
+            h_val, s_val, v_val = hsv_color
 
-            # Draw small square and display color
-            cv2.rectangle(frame, (x, y), (x+square_size, y+square_size), (255,0,0), 2)
-            cv2.putText(frame, str(avg_color_int), (x, y-5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 1)
-            
-    cv2.imshow("Logo Detection", frame)
+            # Filter out low saturation / brightness → Unknown
+            if s_val < 50 or v_val < 50 or v_val > 240:
+                closest = "Unknown"
+                text_color = (128, 128, 128)  # gray text
+            else:
+                ref_colors = {
+                    "Red": (255, 0, 0),
+                    "Yellow": (255, 255, 0),
+                    "Green": (0, 255, 0)
+                }
+
+                def closest_color(rgb):
+                    distances = {name: np.linalg.norm(np.array(rgb) - np.array(val)) 
+                                 for name, val in ref_colors.items()}
+                    return min(distances, key=distances.get)
+
+                closest = closest_color(rgb_color)
+                text_color = (255, 0, 0)  # blue text for clarity
+
+            # Draw square + label
+            cv2.rectangle(frame, (sample_x-5, sample_y-5), (sample_x+5, sample_y+5), (255,0,0), 2)
+            cv2.putText(frame, f"{closest} {rgb_color}", (sample_x+10, sample_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
+
+            # Print in console
+            print(f"Detected RGB: {rgb_color} → Closest: {closest}")
+
+    cv2.imshow("Logo Detection with Color Sampling", frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
