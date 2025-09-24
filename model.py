@@ -7,7 +7,7 @@ import time
 # -------------------------------
 # 0. Setup Arduino Serial
 # -------------------------------
-ARDUINO_PORT = "COM6"  # 🔴 Change this to the correct port (check in Arduino IDE > Tools > Port)
+ARDUINO_PORT = "COM6"
 BAUD_RATE = 9600
 
 try:
