@@ -1,14 +1,34 @@
 import cv2
 import numpy as np
 import os
+import serial
+import time
+
+# -------------------------------
+# 0. Setup Arduino Serial
+# -------------------------------
+ARDUINO_PORT = "COM6"  # 🔴 Change this to the correct port (check in Arduino IDE > Tools > Port)
+BAUD_RATE = 9600
+
+try:
+    arduino = serial.Serial(ARDUINO_PORT, BAUD_RATE, timeout=1)
+    time.sleep(2)  # Give Arduino time to reset
+    print(f"[INFO] Connected to Arduino on {ARDUINO_PORT}.")
+except Exception as e:
+    arduino = None
+    print(f"[WARNING] Could not connect to Arduino on {ARDUINO_PORT}: {e}")
+    print("[WARNING] Servo control will be disabled.")
+
+servo_active = False
+servo_trigger_time = 0
+servo_hold_time = 5  # seconds
 
 # -------------------------------
 # 1. Setup reference logos
 # -------------------------------
 logo_folder = "logos"
-logo_names = ["amazon", "myntra", "nike", "zepto"]  # must match filenames
+logo_names = ["amazon", "myntra", "nike", "zepto"]
 
-# Load reference images
 ref_images = {}
 for name in logo_names:
     img_path = os.path.join(logo_folder, f"{name}.png")
@@ -22,33 +42,26 @@ for name in logo_names:
 sift = cv2.SIFT_create()
 orb = cv2.ORB_create(2000)
 
-# Compute descriptors for reference logos
 ref_descriptors = {}
 for name, img in ref_images.items():
     kp, des = sift.detectAndCompute(img, None)
-    if des is None or len(des) < 5:  # fallback to ORB
+    if des is None or len(des) < 5:
         kp, des = orb.detectAndCompute(img, None)
     if des is None:
         print(f"[WARNING] No descriptors found for {name}")
         continue
-    ref_descriptors[name] = (kp, des, img.shape[::-1])  # (keypoints, descriptors, (width, height))
+    ref_descriptors[name] = (kp, des, img.shape[::-1])
 
-# FLANN matcher (for SIFT/ORB)
+# FLANN matcher setup
 FLANN_INDEX_KDTREE = 1
 FLANN_INDEX_LSH = 6
 index_params_sift = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-index_params_orb = dict(algorithm=FLANN_INDEX_LSH,
-                        table_number=6,
-                        key_size=12,
-                        multi_probe_level=1)
+index_params_orb = dict(algorithm=FLANN_INDEX_LSH, table_number=6, key_size=12, multi_probe_level=1)
 search_params = dict(checks=50)
 
 flann_sift = cv2.FlannBasedMatcher(index_params_sift, search_params)
 flann_orb = cv2.FlannBasedMatcher(index_params_orb, search_params)
 
-# -------------------------------
-# 2. Detect logo & return bounding box
-# -------------------------------
 def detect_logo(frame_gray):
     kp_frame, des_frame = sift.detectAndCompute(frame_gray, None)
     matcher = flann_sift
@@ -69,7 +82,6 @@ def detect_logo(frame_gray):
         except:
             continue
 
-        # Lowe's ratio test
         good_matches = [m for m, n in matches if m.distance < 0.75 * n.distance]
 
         if len(good_matches) > 8:
@@ -88,9 +100,7 @@ def detect_logo(frame_gray):
 
     return best_match, best_box, best_good_matches
 
-# -------------------------------
-# 3. HSV color ranges
-# -------------------------------
+# HSV color ranges
 color_ranges = {
     "red": [
         (np.array([0, 150, 150]), np.array([10, 255, 255])),
@@ -104,13 +114,9 @@ color_ranges = {
     ]
 }
 
-# Pixel area range for 3cm-10cm objects (calibrate if needed)
 min_area = 60**2
 max_area = 200**2
 
-# -------------------------------
-# 4. Webcam loop
-# -------------------------------
 cap = cv2.VideoCapture(0)
 if not cap.isOpened():
     print("[ERROR] Cannot access webcam.")
@@ -130,10 +136,25 @@ while True:
         cv2.putText(frame, f"{prediction} ({score})",
                     (box[0][0][0], box[0][0][1] - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+
+        # ---- Servo Control ----
+        if prediction.lower() == "amazon" and arduino and not servo_active:
+            print("[ACTION] Amazon detected → Servo OPEN")
+            arduino.write(b"OPEN\n")
+            servo_active = True
+            servo_trigger_time = time.time()
+
     if prediction:
         cv2.putText(frame, f"Best Logo: {prediction} ({score})",
                     (20, 40), cv2.FONT_HERSHEY_SIMPLEX,
                     1, (0, 0, 255), 2, cv2.LINE_AA)
+
+    # Reset servo after 5 seconds
+    if servo_active and (time.time() - servo_trigger_time > servo_hold_time):
+        print("[ACTION] Servo CLOSE")
+        if arduino:
+            arduino.write(b"CLOSE\n")
+        servo_active = False
 
     # --- Dominant color box detection ---
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -167,7 +188,7 @@ while True:
 
     cv2.imshow("Logo + Color Box Detection", frame)
 
-    if cv2.waitKey(1) & 0xFF == 27:  # ESC key
+    if cv2.waitKey(1) & 0xFF == 27:
         break
 
 cap.release()
