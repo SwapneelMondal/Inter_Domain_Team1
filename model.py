@@ -118,7 +118,7 @@ color_ranges = {
 min_area = 60**2
 max_area = 200**2
 
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(1)
 if not cap.isOpened():
     print("[ERROR] Cannot access webcam.")
     exit()
