@@ -7,7 +7,7 @@ import time
 # -------------------------------
 # 0. Setup Arduino Serial
 # -------------------------------
-ARDUINO_PORT = "COM6"
+ARDUINO_PORT = "COM6"   # Change to your Arduino COM port
 BAUD_RATE = 9600
 
 try:
@@ -24,7 +24,12 @@ servo_trigger_time = 0
 servo_hold_time = 5  # seconds
 
 # -------------------------------
-# 1. Setup reference logos
+# 1. User Input (Target Company)
+# -------------------------------
+target_company = input("Enter company name (amazon/myntra/nike/zepto): ").strip().lower()
+
+# -------------------------------
+# 2. Setup reference logos
 # -------------------------------
 logo_folder = "logos"
 logo_names = ["amazon", "myntra", "nike", "zepto"]
@@ -100,7 +105,9 @@ def detect_logo(frame_gray):
 
     return best_match, best_box, best_good_matches
 
-# HSV color ranges
+# -------------------------------
+# 3. Color Detection Setup
+# -------------------------------
 color_ranges = {
     "red": [
         (np.array([0, 150, 150]), np.array([10, 255, 255])),
@@ -110,15 +117,20 @@ color_ranges = {
         (np.array([20, 150, 150]), np.array([30, 255, 255]))
     ],
     "blue": [
-    (np.array([90, 100, 50]), np.array([130, 255, 255]))
-]
-
+        (np.array([90, 100, 50]), np.array([130, 255, 255]))
+    ]
 }
 
 min_area = 60**2
 max_area = 200**2
 
-cap = cv2.VideoCapture(1)
+# -------------------------------
+# Tracking Detection Duration
+# -------------------------------
+detection_start_time = None
+required_detection_time = 2  # seconds
+
+cap = cv2.VideoCapture(0)
 if not cap.isOpened():
     print("[ERROR] Cannot access webcam.")
     exit()
@@ -129,35 +141,46 @@ while True:
         break
 
     frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    current_time = time.time()
 
     # --- Logo detection ---
     prediction, box, score = detect_logo(frame_gray)
+
     if prediction and box is not None and score > 15:
         cv2.polylines(frame, [box], True, (0, 255, 0), 3)
         cv2.putText(frame, f"{prediction} ({score})",
                     (box[0][0][0], box[0][0][1] - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
 
-        # ---- Servo Control ----
-        if prediction.lower() == "amazon" and arduino and not servo_active:
-            print("[ACTION] Amazon detected → Servo OPEN")
-            arduino.write(b"OPEN\n")
-            servo_active = True
-            servo_trigger_time = time.time()
+        # --- Check if target logo matches user input ---
+        if prediction.lower() == target_company:
+            if detection_start_time is None:
+                detection_start_time = current_time
+            elif (current_time - detection_start_time >= required_detection_time
+                  and not servo_active):
+                print(f"[ACTION] {target_company.upper()} detected for {required_detection_time}s → Servo OPEN")
+                if arduino:
+                    arduino.write(b"OPEN\n")
+                servo_active = True
+                servo_trigger_time = current_time
+        else:
+            detection_start_time = None
+    else:
+        detection_start_time = None
+
+    # Reset servo after hold time
+    if servo_active and (current_time - servo_trigger_time > servo_hold_time):
+        print("[ACTION] Servo CLOSE")
+        if arduino:
+            arduino.write(b"CLOSE\n")
+        servo_active = False
 
     if prediction:
         cv2.putText(frame, f"Best Logo: {prediction} ({score})",
                     (20, 40), cv2.FONT_HERSHEY_SIMPLEX,
                     1, (0, 0, 255), 2, cv2.LINE_AA)
 
-    # Reset servo after 5 seconds
-    if servo_active and (time.time() - servo_trigger_time > servo_hold_time):
-        print("[ACTION] Servo CLOSE")
-        if arduino:
-            arduino.write(b"CLOSE\n")
-        servo_active = False
-
-    # --- Dominant color box detection ---
+    # --- Color detection ---
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     dominant_box = None
     dominant_color = None
@@ -169,7 +192,7 @@ while True:
             temp_mask = cv2.inRange(hsv, lower, upper)
             mask = temp_mask if mask is None else cv2.bitwise_or(mask, temp_mask)
 
-        kernel = np.ones((5,5), np.uint8)
+        kernel = np.ones((5, 5), np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
         mask = cv2.morphologyEx(mask, cv2.MORPH_DILATE, kernel)
 
@@ -187,7 +210,8 @@ while True:
         cv2.putText(frame, dominant_color.upper() + " BOX", (x, y - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
 
-    cv2.imshow("Logo + Color Box Detection", frame)
+    # Show final output
+    cv2.imshow("Logo + Color Detection + Servo", frame)
 
     if cv2.waitKey(1) & 0xFF == 27:
         break
