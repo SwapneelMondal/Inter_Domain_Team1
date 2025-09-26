@@ -126,7 +126,7 @@ company_last_color = {name: None for name in logo_names}
 company_total_counters = {name: 0 for name in logo_names}
 company_color_counters = {name: {} for name in logo_names}
 
-cap = cv2.VideoCapture(1)
+cap = cv2.VideoCapture(0)
 if not cap.isOpened():
     print("[ERROR] Cannot access webcam.")
     exit()
