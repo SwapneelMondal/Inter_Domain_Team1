@@ -21,7 +21,7 @@ except Exception as e:
 
 servo_active = False
 servo_trigger_time = 0
-servo_hold_time = 5  # seconds
+servo_hold_time = 8  # seconds
 
 # -------------------------------
 # 1. User Input (Target Company)
@@ -61,11 +61,13 @@ for name, img in ref_images.items():
 FLANN_INDEX_KDTREE = 1
 FLANN_INDEX_LSH = 6
 index_params_sift = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-index_params_orb = dict(algorithm=FLANN_INDEX_LSH, table_number=6, key_size=12, multi_probe_level=1)
+index_params_orb = dict(algorithm=FLANN_INDEX_LSH,
+                        table_number=6, key_size=12, multi_probe_level=1)
 search_params = dict(checks=50)
 
 flann_sift = cv2.FlannBasedMatcher(index_params_sift, search_params)
 flann_orb = cv2.FlannBasedMatcher(index_params_orb, search_params)
+
 
 def detect_logo(frame_gray):
     kp_frame, des_frame = sift.detectAndCompute(frame_gray, None)
@@ -104,6 +106,7 @@ def detect_logo(frame_gray):
                     best_box = dst.astype(int)
 
     return best_match, best_box, best_good_matches
+
 
 # -------------------------------
 # 3. Color Detection Setup
