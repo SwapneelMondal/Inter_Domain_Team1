@@ -128,10 +128,13 @@ min_area = 60**2
 max_area = 200**2
 
 # -------------------------------
-# Tracking Detection Duration
+# Tracking Detection Counters
 # -------------------------------
 detection_start_time = None
-required_detection_time = 2  # seconds
+required_detection_time = 2  # seconds for logo validation
+logo_total_counter = 0
+logo_color_counters = {}
+last_detected_color = None
 
 cap = cv2.VideoCapture(0)
 if not cap.isOpened():
@@ -155,7 +158,6 @@ while True:
                     (box[0][0][0], box[0][0][1] - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
 
-        # --- Check if target logo matches user input ---
         if prediction.lower() == target_company:
             if detection_start_time is None:
                 detection_start_time = current_time
@@ -166,6 +168,17 @@ while True:
                     arduino.write(b"OPEN\n")
                 servo_active = True
                 servo_trigger_time = current_time
+
+                # --- LOGGING COUNTERS ---
+                logo_total_counter += 1
+                if last_detected_color:
+                    if last_detected_color not in logo_color_counters:
+                        logo_color_counters[last_detected_color] = 0
+                    logo_color_counters[last_detected_color] += 1
+                    print(f"{logo_color_counters[last_detected_color]} {prediction.upper()} {last_detected_color.upper()} box detected")
+
+                print(f"{logo_total_counter} {prediction.upper()} box detected")
+                detection_start_time = None  # reset for next cycle
         else:
             detection_start_time = None
     else:
@@ -177,11 +190,6 @@ while True:
         if arduino:
             arduino.write(b"CLOSE\n")
         servo_active = False
-
-    if prediction:
-        cv2.putText(frame, f"Best Logo: {prediction} ({score})",
-                    (20, 40), cv2.FONT_HERSHEY_SIMPLEX,
-                    1, (0, 0, 255), 2, cv2.LINE_AA)
 
     # --- Color detection ---
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -212,6 +220,7 @@ while True:
         cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
         cv2.putText(frame, dominant_color.upper() + " BOX", (x, y - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
+        last_detected_color = dominant_color
 
     # Show final output
     cv2.imshow("Logo + Color Detection + Servo", frame)
