@@ -17,11 +17,14 @@ try:
 except Exception as e:
     arduino = None
     print(f"[WARNING] Could not connect to Arduino on {ARDUINO_PORT}: {e}")
-    print("[WARNING] Servo control will be disabled.")
+    print("[WARNING] Servo & Motor control will be disabled.")
 
 servo_active = False
 servo_trigger_time = 0
 servo_hold_time = 8
+
+motor_active = False
+motor_stop_time = 0
 
 # -------------------------------
 # 1. User Input (Target Company)
@@ -118,13 +121,12 @@ max_area = 200**2
 # -------------------------------
 required_detection_time = 2 # seconds
 
-# Per company timers & last color
 company_timers = {name: None for name in logo_names}
 company_last_color = {name: None for name in logo_names}
 company_total_counters = {name: 0 for name in logo_names}
 company_color_counters = {name: {} for name in logo_names}
 
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(1)
 if not cap.isOpened():
     print("[ERROR] Cannot access webcam.")
     exit()
@@ -163,13 +165,20 @@ while True:
 
             print(f"{total_cnt} {detected_company.upper()} box detected")
 
-            # --- Servo for target only ---
-            if detected_company == target_company and not servo_active:
-                print(f"[ACTION] {detected_company.upper()} detected for {required_detection_time}s → Servo OPEN")
+            # --- Servo & Motor for ALL detected logos ---
+            if not servo_active:
+                print(f"[ACTION] {detected_company.upper()} detected → Servo OPEN")
                 if arduino:
                     arduino.write(b"OPEN\n")
                 servo_active = True
                 servo_trigger_time = current_time
+
+            if not motor_active:
+                print(f"[ACTION] {detected_company.upper()} detected → Motor ON")
+                if arduino:
+                    arduino.write(b"MOTOR_ON\n")
+                motor_active = True
+                motor_stop_time = current_time + 10  # Motor runs 10s
 
             company_timers[detected_company] = current_time  # restart timer for next increment
     else:
@@ -183,6 +192,13 @@ while True:
         if arduino:
             arduino.write(b"CLOSE\n")
         servo_active = False
+
+    # Reset motor after 10 seconds
+    if motor_active and current_time >= motor_stop_time:
+        print("[ACTION] Motor OFF")
+        if arduino:
+            arduino.write(b"MOTOR_OFF\n")
+        motor_active = False
 
     # --- Color detection ---
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -213,11 +229,10 @@ while True:
         cv2.rectangle(frame,(x,y),(x+w,y+h),(255,0,0),2)
         cv2.putText(frame,dominant_color.upper()+" BOX",(x,y-10),
                     cv2.FONT_HERSHEY_SIMPLEX,0.8,(255,0,0),2)
-        # update last color for detected companies
         if detected_company:
             company_last_color[detected_company] = dominant_color
 
-    cv2.imshow("Logo + Color Detection + Servo",frame)
+    cv2.imshow("Logo + Color Detection + Servo + Motor",frame)
     if cv2.waitKey(1)&0xFF==27:
         break
 
