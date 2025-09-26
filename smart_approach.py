@@ -6,7 +6,7 @@ import os
 # 1. Setup reference logos
 # -------------------------------
 logo_folder = "logos"
-logo_names = ["Amazon", "Blinkit", "Flipkart", "jio", "Nike"]
+logo_names = ["Amazon", "Flipkart", "jio", "Nike", "Test"]
 
 # Load reference images
 ref_images = {}
@@ -25,8 +25,8 @@ sift = cv2.SIFT_create()
 ref_descriptors = {}
 for name, img in ref_images.items():
     kp, des = sift.detectAndCompute(img, None)
-    if des is None:
-        print(f"[WARNING] No descriptors found for {name}")
+    if des is None or len(des) < 2:
+        print(f"[WARNING] Not enough descriptors for {name}")
         continue
     ref_descriptors[name] = (kp, des, img.shape[::-1])  # (keypoints, descriptors, (width, height))
 
@@ -41,7 +41,7 @@ flann = cv2.FlannBasedMatcher(index_params, search_params)
 # -------------------------------
 def detect_logo(frame_gray):
     kp_frame, des_frame = sift.detectAndCompute(frame_gray, None)
-    if des_frame is None:
+    if des_frame is None or len(des_frame) < 2:
         return None, None, 0
 
     best_match = None
@@ -49,7 +49,13 @@ def detect_logo(frame_gray):
     best_box = None
 
     for name, (kp_ref, des_ref, shape) in ref_descriptors.items():
+        if des_ref is None or len(des_ref) < 2:
+            continue
+
         matches = flann.knnMatch(des_ref, des_frame, k=2)
+        if len(matches) == 0:
+            continue
+
         good_matches = [m for m, n in matches if m.distance < 0.7 * n.distance]
 
         if len(good_matches) > 10:
@@ -69,18 +75,13 @@ def detect_logo(frame_gray):
     return best_match, best_box, best_good_matches
 
 # -------------------------------
-# 3. Initialize webcam & dictionary
+# 3. Webcam loop
 # -------------------------------
 cap = cv2.VideoCapture(0)
 if not cap.isOpened():
     print("[ERROR] Cannot access webcam.")
     exit()
 
-detected_boxes = {}  # Stores detected box characteristics
-
-# -------------------------------
-# 4. Main loop
-# -------------------------------
 while True:
     ret, frame = cap.read()
     if not ret:
@@ -89,64 +90,53 @@ while True:
     frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     prediction, box, score = detect_logo(frame_gray)
 
-    if prediction and box is not None and score > 20:
+    if prediction and box is not None and score > 40:
         # Draw bounding polygon
         cv2.polylines(frame, [box], True, (0,255,0), 3)
+
+        # Put label above the first corner
         cv2.putText(frame, f"{prediction} ({score})", 
                     (box[0][0][0], box[0][0][1] - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2, cv2.LINE_AA)
 
-        # -------------------------------
-        # Ratio-based offset for color detection
-        # -------------------------------
-        w = int(np.linalg.norm(box[0][0] - box[1][0]))
-        h = int(np.linalg.norm(box[1][0] - box[2][0]))
-        offset_x = int(0.2 * w)
-        offset_y = int(0.2 * h)
-        sample_x = int(box[2][0][0] + offset_x)
-        sample_y = int(box[2][0][1] + offset_y)
+        # -----------------------------
+        # Small square diagonally outside the detected logo
+        # -----------------------------
+        offset = 5  # pixels away from logo
+        square_size = 5  # 5x5 region
+        # bottom-right corner of the detected polygon
+        x = box[2][0][0] + offset
+        y = box[2][0][1] + offset
 
-        if 0 <= sample_x < frame.shape[1] and 0 <= sample_y < frame.shape[0]:
-            color = frame[sample_y, sample_x].tolist()  # BGR
-            rgb_color = (color[2], color[1], color[0])  # BGR → RGB
+        # Ensure square is inside frame
+        if x + square_size < frame.shape[1] and y + square_size < frame.shape[0]:
+            square = frame[y:y+square_size, x:x+square_size]
+            avg_color = square.mean(axis=(0,1))  # BGR average
+            avg_color_int = tuple([int(c) for c in avg_color])
+            
+            # Compute average color in BGR
+            square = frame[y:y+square_size, x:x+square_size]
+            avg_color = square.mean(axis=(0,1))  # BGR average
+            avg_color_int = tuple([int(c) for c in avg_color])
 
-            # Convert to HSV for saturation/brightness check
-            hsv_color = cv2.cvtColor(np.uint8([[color]]), cv2.COLOR_BGR2HSV)[0][0]
-            h_val, s_val, v_val = hsv_color
+            # Convert BGR -> RGB
+            avg_color_rgb = (avg_color_int[2], avg_color_int[1], avg_color_int[0])
 
-            # Map to closest color or Unknown
-            if s_val < 50 or v_val < 50 or v_val > 240:
-                closest = "Unknown"
-                text_color = (128,128,128)
-            else:
-                ref_colors = {
-                    "Red": (255, 0, 0),
-                    "Yellow": (255, 255, 0),
-                    "Green": (0, 255, 0)
-                }
-                distances = {name: np.linalg.norm(np.array(rgb_color)-np.array(val)) 
-                             for name, val in ref_colors.items()}
-                closest = min(distances, key=distances.get)
-                text_color = (255,0,0)
+            # Draw small square and display color on frame (still blue rectangle)
+            cv2.rectangle(frame, (x, y), (x+square_size, y+square_size), (255,0,0), 2)
+            cv2.putText(frame, str(avg_color_rgb), (x, y-5),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 1)
 
-            # Draw square + label
-            cv2.rectangle(frame, (sample_x-5, sample_y-5), (sample_x+5, sample_y+5), (255,0,0), 2)
-            cv2.putText(frame, f"{closest} {rgb_color}", (sample_x+10, sample_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
+            # Print RGB to console
+            print(f"Detected color (RGB): {avg_color_rgb}")
 
-            # -------------------------------
-            # Store detected box in dictionary
-            # -------------------------------
-            box_id = (int(box[2][0][0] // 10), int(box[2][0][1] // 10))
-            if box_id not in detected_boxes:
-                detected_boxes[box_id] = {
-                    "logo": prediction,
-                    "color": closest,
-                    "rgb": rgb_color
-                }
-                print(f"[NEW BOX] ID: {box_id} → {detected_boxes[box_id]}")
+            # Draw small square and display color
+            cv2.rectangle(frame, (x, y), (x+square_size, y+square_size), (255,0,0), 2)
+            cv2.putText(frame, str(avg_color_int), (x, y-5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 1)
+            
+    cv2.imshow("Logo Detection", frame)
 
-    cv2.imshow("Logo Detection with Color Sampling", frame)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
