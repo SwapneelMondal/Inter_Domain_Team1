@@ -36,7 +36,7 @@ ready_to_store = True
 stable_detection = None
 stable_start_time = None
 stable_time_required = 1.0  # seconds
-reset_wait = 3
+reset_wait = 1
 last_detection_time = time.time()
 amazon_count = 0
 
@@ -108,7 +108,6 @@ def detect_single_logo(frame_gray):
             continue
         good_matches = [m for m, n in matches if m.distance < 0.75 * n.distance]
 
-        # Only compute homography if at least 4 good matches exist
         if len(good_matches) >= 4:
             src_pts = np.float32([kp_ref[m.queryIdx].pt for m in good_matches]).reshape(-1,1,2)
             dst_pts = np.float32([kp_frame[m.trainIdx].pt for m in good_matches]).reshape(-1,1,2)
@@ -117,7 +116,6 @@ def detect_single_logo(frame_gray):
                 w, h = shape
                 pts = np.float32([[0,0],[0,h-1],[w-1,h-1],[w-1,0]]).reshape(-1,1,2)
                 dst = cv2.perspectiveTransform(pts, M)
-                # Choose the logo with the most good matches
                 if len(good_matches) > best_score:
                     best_match = name
                     best_box = dst.astype(int)
@@ -199,21 +197,25 @@ while True:
                 dominant_box if dominant_box else ""
             ])
 
-    # --- Stability + Amazon Servo ---
+    # --- Stability + Amazon Servo + LCD Count + Print ---
     if prediction == "Amazon" and dominant_color:
         current_detection = ("Amazon", dominant_color)
         if stable_detection == current_detection:
             elapsed = time.time() - stable_start_time
-            if elapsed >= stable_time_required and ready_to_store:
-                print(f"[INFO] Amazon:{dominant_color} stored")
-                ready_to_store = False
-                if arduino:
-                    arduino.write(b"OPEN\n")
-                    servo_active = True
-                    servo_trigger_time = time.time()
-                    amazon_count += 1
-                    lcd_msg = f"Amazon:{amazon_count}\n"
-                    arduino.write(lcd_msg.encode())
+            if elapsed >= stable_time_required:
+                if ready_to_store:
+                    amazon_count += 1  # increment count
+                    print(f"[INFO] Amazon:{dominant_color} stored")
+                    print(f"[INFO] Total Amazon boxes stored: {amazon_count}")  # <-- print here
+                    ready_to_store = False
+                    if arduino:
+                        arduino.write(b"OPEN\n")
+                        servo_active = True
+                        servo_trigger_time = time.time()
+                        lcd_msg = f"Amazon Boxes: {amazon_count}\n"
+                        arduino.write(lcd_msg.encode())
+                else:
+                    print(f"[INFO] Amazon box detected, waiting for reset")
         else:
             stable_detection = current_detection
             stable_start_time = time.time()
@@ -238,7 +240,7 @@ while True:
 
     cv2.imshow("Logo + Color Box Detection", frame)
     key = cv2.waitKey(1)
-    if key==27 or key==ord('q'):
+    if key == 27 or key == ord('q'):
         break
 
 cap.release()
